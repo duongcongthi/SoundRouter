@@ -105,6 +105,83 @@ final class ProcessGroupingTests: XCTestCase {
         XCTAssertEqual(groups.map(\.name), ["Z App", "A App", "B App", "audiomxd"])
     }
 
+    /// 巢狀的 helper app 歸給最外層的 App。
+    func testNestedHelperAppBelongsToOutermostApp() {
+        let path = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework"
+            + "/Versions/1/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper"
+
+        XCTAssertEqual(
+            AudioProcesses.owningBundlePath(forExecutablePath: path),
+            "/Applications/Google Chrome.app"
+        )
+    }
+
+    /// 放在 Xcode 的 Applications 資料夾裡的 Device Hub、Simulator 是獨立 App，不能併進 Xcode。
+    func testAppInsideApplicationsFolderIsItsOwnOwner() {
+        XCTAssertEqual(
+            AudioProcesses.owningBundlePath(
+                forExecutablePath: "/Applications/Xcode.app/Contents/Applications/DeviceHub.app/Contents/MacOS/DeviceHub"
+            ),
+            "/Applications/Xcode.app/Contents/Applications/DeviceHub.app"
+        )
+        XCTAssertEqual(
+            AudioProcesses.owningBundlePath(
+                forExecutablePath: "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator"
+            ),
+            "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"
+        )
+        XCTAssertNil(AudioProcesses.owningBundlePath(forExecutablePath: "/usr/sbin/coreaudiod"))
+    }
+
+    /// 模擬器的聲音由 CoreSimulator 的 SimAudioProcessorService 代播，Device Hub 優先、Simulator 次之。
+    func testSimulatorAudioServiceIsClaimedByDeviceHubThenSimulator() {
+        let service = "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources"
+            + "/SimAudioProcessorServices.simdeviceio/Contents/XPCServices/SimAudioProcessorService.xpc"
+            + "/Contents/MacOS/SimAudioProcessorService"
+        let streamService = "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources"
+            + "/SimStreamProcessorServices.simdeviceio/Contents/XPCServices/SimStreamProcessorService.xpc"
+            + "/Contents/MacOS/SimStreamProcessorService"
+
+        XCTAssertEqual(
+            AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: service),
+            ["com.apple.dt.Devices", "com.apple.iphonesimulator"]
+        )
+        XCTAssertEqual(AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: streamService), [])
+        XCTAssertEqual(
+            AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: "/usr/local/bin/SimAudioProcessorService"), []
+        )
+    }
+
+    /// 實機鏡像的聲音經 avconferenced 播放，只歸給 Device Hub（Simulator 不做實機鏡像）。
+    func testAVConferencedIsClaimedOnlyByDeviceHub() {
+        XCTAssertEqual(
+            AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: "/usr/libexec/avconferenced"),
+            ["com.apple.dt.Devices"]
+        )
+        XCTAssertEqual(AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: "/usr/sbin/coreaudiod"), [])
+    }
+
+    /// 模擬器音訊服務歸到 Device Hub 後，要與 Device Hub 本體共用同一組、同一條路由。
+    func testSimulatorAudioServiceJoinsDeviceHubGroup() {
+        let processes = [
+            process(1, pid: 3241, bundleID: "com.apple.dt.Devices", name: "Device Hub"),
+            process(
+                2, pid: 3101,
+                bundleID: "com.apple.CoreSimulator.SimAudioProcessorServices.SimAudioProcessorService",
+                name: "SimAudioProcessorService", playing: true
+            ),
+        ]
+        let deviceHub = owner("com.apple.dt.Devices", "Device Hub", pid: 3241)
+
+        let groups = AudioProcesses.makeGroups(from: processes) { _ in deviceHub }
+
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].key, "com.apple.dt.Devices")
+        XCTAssertEqual(groups[0].processObjectIDs, [1, 2])
+        XCTAssertTrue(groups[0].isPlaying)
+        XCTAssertFalse(groups[0].isSystemProcess)
+    }
+
     /// 沒有 bundle ID 也沒有歸屬時，用 pid 當鍵，不能讓多個行程互相蓋掉。
     func testProcessesWithoutBundleIDGetDistinctKeys() {
         let processes = [

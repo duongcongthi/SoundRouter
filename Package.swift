@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "SoundRouter",
     // 有了 defaultLocalization，SwiftPM 才會處理 .lproj 目錄。
-    defaultLocalization: "zh-Hant",
+    defaultLocalization: "en",
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "AudioRouterCore", targets: ["AudioRouterCore"]),

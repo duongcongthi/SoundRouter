@@ -11,8 +11,8 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>audiorouter 需要擷取其他 App 的音訊，才能把它們導向指定的輸出裝置。</string>
+	<string>audiorouter needs to capture other apps' audio to route it to the chosen output device.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>audiorouter 需要音訊擷取權限，才能重新導向各個 App 的聲音。</string>
+	<string>audiorouter needs audio capture permission to reroute each app's sound.</string>
 </dict>
 </plist>

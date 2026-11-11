@@ -115,41 +115,65 @@ private struct SystemOutputSection: View {
     var body: some View {
         // 尺寸與字體都對齊下面每一列的 App：同樣是「一個播放目標加一組輸出選擇」，
         // 視覺上就該是同一種東西，而不是一個樣式不同的標題列。
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             // 用電腦而不是喇叭：這一列講的是「整台機器的輸出」。
             Image(systemName: "desktopcomputer")
                 .frame(width: 24, height: 24)
                 .foregroundStyle(.secondary)
 
-            Text(L("systemOutput.title"))
-                .fontWeight(.medium)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(L("systemOutput.title"))
+                        .fontWeight(.medium)
+                        .lineLimit(1)
 
-            Spacer()
+                    Spacer()
 
-            // 跟每個 App 那一列用同一種控制項。系統輸出一定有指定裝置，
-            // 所以沒有「自動」那一段。
-            Picker("", selection: Binding(
-                get: { manager.defaultOutput?.uid },
-                set: { uid in
-                    guard let uid,
-                          let device = manager.outputDevices.first(where: { $0.uid == uid })
-                    else { return }
-                    manager.setSystemDefaultOutput(device)
+                    devicePicker
                 }
-            )) {
-                ForEach(manager.outputDevices) { device in
-                    Image(systemName: DeviceIcon.symbol(for: device))
-                        .help(device.name)
-                        .tag(String?.some(device.uid))
+
+                // 總音量：預設輸出裝置本身的硬體音量，等同鍵盤音量鍵。
+                if let volume = manager.systemVolume {
+                    VolumeControl(
+                        value: volume,
+                        isMuted: manager.systemMuted,
+                        onChange: { manager.setSystemVolume($0) },
+                        onToggleMute: manager.systemMuted.map { muted in
+                            { manager.setSystemMuted(!muted) }
+                        }
+                    )
+                } else {
+                    Text(L("systemOutput.volumeUnavailable"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    // 跟每個 App 那一列用同一種控制項。系統輸出一定有指定裝置，
+    // 所以沒有「自動」那一段。
+    private var devicePicker: some View {
+        Picker("", selection: Binding(
+            get: { manager.defaultOutput?.uid },
+            set: { uid in
+                guard let uid,
+                      let device = manager.outputDevices.first(where: { $0.uid == uid })
+                else { return }
+                manager.setSystemDefaultOutput(device)
+            }
+        )) {
+            ForEach(manager.outputDevices) { device in
+                Image(systemName: DeviceIcon.symbol(for: device))
+                    .help(device.name)
+                    .tag(String?.some(device.uid))
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 }
 

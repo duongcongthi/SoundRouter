@@ -197,15 +197,15 @@ public final class RouteEngine {
         description.muteBehavior = sourceBehavior == .muteOriginal ? .muted : .unmuted
 
         var id = AudioObjectID.unknown
-        try checked("建立 process tap") { AudioHardwareCreateProcessTap(description, &id) }
+        try checked("Create process tap") { AudioHardwareCreateProcessTap(description, &id) }
         guard id.isValid else {
-            throw CoreAudioError(status: kAudioHardwareBadObjectError, operation: "建立 process tap")
+            throw CoreAudioError(status: kAudioHardwareBadObjectError, operation: "Create process tap")
         }
         tapID = id
     }
 
     private func createAggregateDevice() throws {
-        let tapUID = try tapID.readString(kAudioTapPropertyUID, label: "讀取 tap UID")
+        let tapUID = try tapID.readString(kAudioTapPropertyUID, label: "Read tap UID")
         let uid = Self.aggregateUIDPrefix + UUID().uuidString
 
         let description: [String: Any] = [
@@ -228,25 +228,25 @@ public final class RouteEngine {
         ]
 
         var id = AudioObjectID.unknown
-        try checked("建立 aggregate 裝置") {
+        try checked("Create aggregate device") {
             AudioHardwareCreateAggregateDevice(description as CFDictionary, &id)
         }
         guard id.isValid else {
-            throw CoreAudioError(status: kAudioHardwareBadObjectError, operation: "建立 aggregate 裝置")
+            throw CoreAudioError(status: kAudioHardwareBadObjectError, operation: "Create aggregate device")
         }
         aggregateID = id
     }
 
     private func startIO() throws {
         let tapFormat: AudioStreamBasicDescription = try tapID.read(
-            kAudioTapPropertyFormat, label: "讀取 tap 音訊格式"
+            kAudioTapPropertyFormat, label: "Read tap audio format"
         )
         let outputFormat = try aggregateOutputFormat()
 
         guard tapFormat.isFloat32, outputFormat.isFloat32 else {
             throw CoreAudioError(
                 status: kAudioHardwareUnsupportedOperationError,
-                operation: "檢查串流格式（只支援 32-bit float；tap: \(tapFormat.debugSummary)、輸出: \(outputFormat.debugSummary)）"
+                operation: "Check stream formats (only 32-bit float is supported; tap: \(tapFormat.debugSummary), output: \(outputFormat.debugSummary))"
             )
         }
 
@@ -272,26 +272,26 @@ public final class RouteEngine {
         }
 
         var procID: AudioDeviceIOProcID?
-        try checked("建立 IOProc") {
+        try checked("Create IOProc") {
             AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, ioQueue, block)
         }
         ioProcID = procID
-        try checked("啟動聚合裝置") { AudioDeviceStart(aggregateID, procID) }
+        try checked("Start aggregate device") { AudioDeviceStart(aggregateID, procID) }
     }
 
     private func aggregateOutputFormat() throws -> AudioStreamBasicDescription {
         let streams: [AudioObjectID] = try aggregateID.readArray(
             kAudioDevicePropertyStreams,
             scope: kAudioObjectPropertyScopeOutput,
-            label: "讀取聚合裝置輸出 stream"
+            label: "Read aggregate device output streams"
         )
         guard let first = streams.first else {
             throw CoreAudioError(
                 status: kAudioHardwareUnsupportedOperationError,
-                operation: "取得聚合裝置的輸出 stream"
+                operation: "Get aggregate device output stream"
             )
         }
-        return try first.read(kAudioStreamPropertyVirtualFormat, label: "讀取輸出串流格式")
+        return try first.read(kAudioStreamPropertyVirtualFormat, label: "Read output stream format")
     }
 
     // MARK: - 即時渲染

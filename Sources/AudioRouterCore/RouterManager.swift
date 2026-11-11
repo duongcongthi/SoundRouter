@@ -66,6 +66,10 @@ public final class RouterManager: ObservableObject {
     @Published public private(set) var inputDevices: [AudioDevice] = []
     @Published public private(set) var defaultOutput: AudioDevice?
     @Published public private(set) var defaultInput: AudioDevice?
+    /// 系統預設輸出裝置的硬體音量（總音量）。裝置不支援軟體音量時為 nil。
+    @Published public private(set) var systemVolume: Float?
+    /// 系統預設輸出裝置的靜音狀態。裝置不支援靜音時為 nil。
+    @Published public private(set) var systemMuted: Bool?
     @Published public var lastError: String?
 
     /// 是否把系統守護程序（CoreSpeech、audiomxd…）也列出來。
@@ -94,6 +98,9 @@ public final class RouterManager: ObservableObject {
 
     private var processObserver: Any?
     private var deviceObserver: Any?
+    /// 預設輸出裝置的音量／靜音監聽器，預設裝置一換就重掛。
+    private var systemVolumeObserver: Any?
+    private var observedVolumeDeviceID: AudioObjectID?
     /// 播放狀態的監聽器，只掛在清單上會顯示的 App。
     private var playbackObserver: AudioProcesses.PlaybackObserver?
     /// 目前監看中的行程，用來判斷是否需要重掛。
@@ -167,6 +174,29 @@ public final class RouterManager: ObservableObject {
         refresh()
     }
 
+    /// 調整系統預設輸出裝置的硬體音量，等同鍵盤音量鍵。
+    public func setSystemVolume(_ volume: Float) {
+        guard let device = defaultOutput else { return }
+        let clamped = max(0, min(1, volume))
+        do {
+            try AudioDevices.setVolume(clamped, on: device)
+            // 先直接反映，不等 listener 回來，拖曳才會跟手。
+            systemVolume = clamped
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
+    public func setSystemMuted(_ muted: Bool) {
+        guard let device = defaultOutput else { return }
+        do {
+            try AudioDevices.setMuted(muted, on: device)
+            systemMuted = muted
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
     public func settings(forKey key: String) -> RouteSettings {
         settings[key] ?? RouteSettings()
     }
@@ -194,11 +224,30 @@ public final class RouterManager: ObservableObject {
         inputDevices = AudioDevices.inputs()
         defaultOutput = AudioDevices.defaultOutput()
         defaultInput = AudioDevices.defaultInput()
+        updateSystemVolumeObserver()
+        readSystemVolume()
         currentGroups = AudioProcesses.groups()
         reconcile()
         rebuildSnapshot()
         updatePlaybackObservers()
         writeDiagnosticSnapshot()
+    }
+
+    /// 只重讀總音量與靜音。音量鍵觸發的通知很頻繁，不必每次都走完整的 refresh。
+    private func readSystemVolume() {
+        systemVolume = defaultOutput.flatMap(AudioDevices.volume(of:))
+        systemMuted = defaultOutput.flatMap(AudioDevices.isMuted)
+    }
+
+    private func updateSystemVolumeObserver() {
+        guard observedVolumeDeviceID != defaultOutput?.id else { return }
+        observedVolumeDeviceID = defaultOutput?.id
+        // 先釋放舊的：它的 deinit 會移除先前裝置上的監聽器。
+        systemVolumeObserver = nil
+        guard let device = defaultOutput else { return }
+        systemVolumeObserver = AudioDevices.observeVolume(of: device, queue: .main) { [weak self] in
+            Task { @MainActor in self?.readSystemVolume() }
+        }
     }
 
     /// 只對清單上顯示得出來的 App 監看播放狀態。
@@ -391,7 +440,7 @@ public final class RouterManager: ObservableObject {
         pendingStarts.remove(key)
         engineErrors[key] = message
         failedTargets[key] = (deviceUID, processIDs)
-        lastError = "\(displayName)：\(message)"
+        lastError = "\(displayName): \(message)"
         rebuildSnapshot()
         writeDiagnosticSnapshot()
     }

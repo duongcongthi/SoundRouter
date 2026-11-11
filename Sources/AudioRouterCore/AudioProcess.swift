@@ -191,18 +191,72 @@ public enum AudioProcesses {
         if let fromPath = owningApplicationFromExecutablePath(of: pid) {
             return fromPath
         }
+        if let host = owningApplicationForSharedAudioService(of: pid) {
+            return host
+        }
         return owningApplicationFromParentChain(of: pid)
+    }
+
+    static let deviceHubBundleID = "com.apple.dt.Devices"
+    static let simulatorBundleID = "com.apple.iphonesimulator"
+
+    /// 代替某個 App 發聲的共用系統服務 → 可以認領它的宿主 App，依優先順序排列。
+    ///
+    /// Device Hub 本身幾乎不出聲，真正發聲的是這些服務，路徑與父行程鏈（launchd）都歸不到它：
+    /// - 模擬器：CoreSimulator 的 `SimAudioProcessorService` 代播，Device Hub 或舊的 Simulator.app 都會用到。
+    /// - 實機鏡像：iPhone／iPad 的聲音經 `avconferenced` 串流回 Mac 播放。
+    ///   它也服務 FaceTime、接續互通相機等，所以只在 Device Hub 執行時才歸給它。
+    ///   通話與鏡像的聲音混在同一個行程、同一個輸出裝置上，tap 無從分開：
+    ///   Device Hub 執行期間，通話音量也會跟著 Device Hub 的設定走。
+    static func hostBundleIDs(forSharedAudioServiceAt path: String) -> [String] {
+        if path == "/usr/libexec/avconferenced" {
+            return [deviceHubBundleID]
+        }
+        if path.contains("/CoreSimulator.framework/"),
+           (path as NSString).lastPathComponent == "SimAudioProcessorService" {
+            return [deviceHubBundleID, simulatorBundleID]
+        }
+        return []
+    }
+
+    /// 把共用音訊服務歸給目前正在跑的宿主 App；都沒在跑就不歸戶。
+    static func owningApplicationForSharedAudioService(of pid: pid_t) -> OwningApplication? {
+        guard let path = executablePath(of: pid) else { return nil }
+        for bundleID in hostBundleIDs(forSharedAudioServiceAt: path) {
+            guard let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID).first else { continue }
+            return OwningApplication(
+                pid: running.processIdentifier,
+                bundleID: bundleID,
+                name: running.localizedName ?? bundleID,
+                isUserApplication: running.activationPolicy == .regular
+            )
+        }
+        return nil
+    }
+
+    /// 執行檔路徑 → 它所屬 App 的 bundle 路徑。
+    ///
+    /// 原則上取最外層的 `.app`，巢狀的 helper app 歸給外面那個。例外是直接放在
+    /// `Applications` 資料夾裡的巢狀 App：Xcode 把 Device Hub 放在
+    /// `Xcode.app/Contents/Applications/`、Simulator 放在
+    /// `Xcode.app/Contents/Developer/Applications/`，它們是獨立的 App，不是 Xcode 的 helper。
+    static func owningBundlePath(forExecutablePath path: String) -> String? {
+        let components = path.components(separatedBy: "/")
+        guard var index = components.firstIndex(where: { $0.hasSuffix(".app") }) else { return nil }
+        for next in components.indices where next > index + 1 && components[next].hasSuffix(".app") {
+            guard components[next - 1] == "Applications" else { break }
+            index = next
+        }
+        return components[0...index].joined(separator: "/")
     }
 
     /// bundle 路徑 → App 資訊。同一個 App 底下常有好幾個行程，查一次就夠。
     private static var bundleCache: [String: OwningApplication?] = [:]
 
     static func owningApplicationFromExecutablePath(of pid: pid_t) -> OwningApplication? {
-        guard let path = executablePath(of: pid) else { return nil }
-        let components = path.components(separatedBy: "/")
-        // firstIndex 取到的是最外層的 .app：巢狀的 helper app 會歸給外面那個。
-        guard let index = components.firstIndex(where: { $0.hasSuffix(".app") }) else { return nil }
-        let bundlePath = components[0...index].joined(separator: "/")
+        guard let path = executablePath(of: pid),
+              let bundlePath = owningBundlePath(forExecutablePath: path) else { return nil }
 
         let resolved: OwningApplication?
         if let cached = bundleCache[bundlePath] {

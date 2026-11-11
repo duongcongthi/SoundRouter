@@ -123,11 +123,11 @@ public enum AudioDevices {
     }
 
     public static func setDefaultOutput(_ device: AudioDevice) throws {
-        try setDefault(device, selector: kAudioHardwarePropertyDefaultOutputDevice, label: "設定預設輸出裝置")
+        try setDefault(device, selector: kAudioHardwarePropertyDefaultOutputDevice, label: "Set default output device")
     }
 
     public static func setDefaultInput(_ device: AudioDevice) throws {
-        try setDefault(device, selector: kAudioHardwarePropertyDefaultInputDevice, label: "設定預設輸入裝置")
+        try setDefault(device, selector: kAudioHardwarePropertyDefaultInputDevice, label: "Set default input device")
     }
 
     private static func setDefault(
@@ -203,7 +203,7 @@ public enum AudioDevices {
         guard didSet else {
             throw CoreAudioError(
                 status: lastError == noErr ? kAudioHardwareUnknownPropertyError : lastError,
-                operation: "設定「\(device.name)」音量（裝置不支援軟體音量控制）"
+                operation: "Set volume of \"\(device.name)\" (the device does not support software volume control)"
             )
         }
     }
@@ -220,11 +220,51 @@ public enum AudioDevices {
     public static func setMuted(_ muted: Bool, on device: AudioDevice) throws {
         var addr = AudioObjectID.address(kAudioDevicePropertyMute, kAudioObjectPropertyScopeOutput)
         var value: UInt32 = muted ? 1 : 0
-        try checked("設定「\(device.name)」靜音") {
+        try checked("Set mute of \"\(device.name)\"") {
             AudioObjectSetPropertyData(
                 device.id, &addr, 0, nil,
                 UInt32(MemoryLayout<UInt32>.size), &value
             )
+        }
+    }
+
+    /// 監看某個裝置的輸出音量與靜音（例如使用者按了鍵盤音量鍵）。
+    /// 回傳的 token 釋放時自動移除監聽。
+    public static func observeVolume(
+        of device: AudioDevice,
+        queue: DispatchQueue = .main,
+        handler: @escaping () -> Void
+    ) -> Any {
+        VolumeObserver(device: device, queue: queue, handler: handler)
+    }
+
+    private final class VolumeObserver {
+        private let deviceID: AudioObjectID
+        private let queue: DispatchQueue
+        private var blocks: [(AudioObjectPropertySelector, AudioObjectPropertyElement, AudioObjectPropertyListenerBlock)] = []
+
+        init(device: AudioDevice, queue: DispatchQueue, handler: @escaping () -> Void) {
+            self.deviceID = device.id
+            self.queue = queue
+            // 跟 volume(of:) 一樣，音量可能掛在 main element 或各聲道上；不存在的屬性掛不上，直接略過。
+            for selector in [kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyMute] {
+                for element in volumeElements(of: device) {
+                    guard let block = device.id.addListener(
+                        selector, scope: kAudioObjectPropertyScopeOutput, element: element,
+                        queue: queue, handler: handler
+                    ) else { continue }
+                    blocks.append((selector, element, block))
+                }
+            }
+        }
+
+        deinit {
+            for (selector, element, block) in blocks {
+                deviceID.removeListener(
+                    selector, scope: kAudioObjectPropertyScopeOutput, element: element,
+                    queue: queue, block: block
+                )
+            }
         }
     }
 

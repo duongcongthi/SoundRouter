@@ -16,9 +16,9 @@ public struct CoreAudioError: LocalizedError, CustomStringConvertible {
 
     public var description: String {
         if let code = Self.fourCharCode(status) {
-            return "\(operation) 失敗：'\(code)' (\(status))"
+            return "\(operation) failed: '\(code)' (\(status))"
         }
-        return "\(operation) 失敗：\(status)"
+        return "\(operation) failed: \(status)"
     }
 
     private static func fourCharCode(_ status: OSStatus) -> String? {
@@ -99,8 +99,8 @@ extension AudioObjectID {
             assertionFailure("讀取 \(selector.fourCharString) 時 T 被推導成 \(T.self)，請在呼叫端寫 as: 型別")
             throw CoreAudioError(
                 status: kAudioHardwareIllegalOperationError,
-                operation: "讀取屬性 \(selector.fourCharString) 時型別被推導成 \(T.self)，"
-                    + "請在呼叫端明確指定 as: 型別"
+                operation: "Reading property \(selector.fourCharString) inferred the type as \(T.self); "
+                    + "pass as: <type> explicitly at the call site"
             )
         }
 
@@ -108,7 +108,7 @@ extension AudioObjectID {
         var size = UInt32(MemoryLayout<T>.size)
         let buffer = UnsafeMutablePointer<T>.allocate(capacity: 1)
         defer { buffer.deallocate() }
-        try checked(label ?? "讀取屬性 \(selector.fourCharString)") {
+        try checked(label ?? "Read property \(selector.fourCharString)") {
             AudioObjectGetPropertyData(self, &addr, 0, nil, &size, buffer)
         }
         return buffer.pointee
@@ -124,7 +124,7 @@ extension AudioObjectID {
     ) throws -> [T] {
         var addr = Self.address(selector, scope, element)
         var size: UInt32 = 0
-        try checked(label ?? "查詢屬性大小 \(selector.fourCharString)") {
+        try checked(label ?? "Get size of property \(selector.fourCharString)") {
             AudioObjectGetPropertyDataSize(self, &addr, 0, nil, &size)
         }
         let count = Int(size) / MemoryLayout<T>.stride
@@ -132,7 +132,7 @@ extension AudioObjectID {
 
         let buffer = UnsafeMutablePointer<T>.allocate(capacity: count)
         defer { buffer.deallocate() }
-        try checked(label ?? "讀取屬性 \(selector.fourCharString)") {
+        try checked(label ?? "Read property \(selector.fourCharString)") {
             AudioObjectGetPropertyData(self, &addr, 0, nil, &size, buffer)
         }
         return Array(UnsafeBufferPointer(start: buffer, count: Int(size) / MemoryLayout<T>.stride))
@@ -147,7 +147,7 @@ extension AudioObjectID {
         var addr = Self.address(selector, scope, element)
         var size = UInt32(MemoryLayout<CFString?>.size)
         var value: CFString? = nil
-        try checked(label ?? "讀取字串屬性 \(selector.fourCharString)") {
+        try checked(label ?? "Read string property \(selector.fourCharString)") {
             withUnsafeMutablePointer(to: &value) { pointer in
                 AudioObjectGetPropertyData(self, &addr, 0, nil, &size, pointer)
             }
