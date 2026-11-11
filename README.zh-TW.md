@@ -60,19 +60,22 @@ Process tap 需要系統音訊擷取授權。**沒有拿到授權時 tap 不會�
 
 ## 介面
 
-點選單列圖示展開面板：
+點選單列圖示（方形音箱）展開面板：
 
-<img src="docs/screenshot.png" width="440" alt="SoundRouter 面板：上方是系統輸出裝置，下面三個 App 各自有輸出裝置與音量">
+<img src="docs/screenshot.png" width="426" alt="SoundRouter 面板：上方是系統輸出與總音量，下面五個 App 各自有輸出裝置與音量">
 
+> 介面跟隨系統語言：英文或繁體中文，其他語言一律退回英文。截圖為英文介面。
+
+- **系統輸出**（最上面一列）：預設輸出裝置，加上**總音量**滑軌與靜音鈕。調的是裝置本身的硬體音量，等同鍵盤音量鍵，按音量鍵時滑軌也會跟著動。不支援軟體音量的裝置（部分 HDMI 螢幕）改顯示一行說明。
 - **輸出裝置**：分段控制，一個裝置一段。選「自動」表示不介入，跟隨系統輸出。每段的圖示依**傳輸類型**決定，游標移上去顯示裝置名稱。
-- **音量**：滑軌，分成 20 格、每格 5%，上限 100%（不做增益放大，避免破音）。
+- **音量**：系統標準的連續滑軌，上限 100%（不做增益放大，避免破音）。
 - **綠點**：該 App 正在出聲。
 - **數字徽章**：這個 App 底下有幾個發聲行程（見下節）。
 - **「未執行」徽章**：這個 App 有存下來的路由設定，但目前沒在跑。設定會保留，它回來時自動套用。
 - **紅色三角形／ⓘ／轉圈**：路由建立失敗（游標移上去看訊息）、指定的裝置離線中而暫時走系統輸出、或引擎還在建立中。
 - **在某一列按右鍵**可以「重設這個 App」；沒在跑的 App 還會多一項「移除這筆設定」。
-- **右下刪節號**：顯示／隱藏系統程序。
-- **最下方「開機時自動啟動」勾選框**：用 `SMAppService` 註冊登入項目。
+- **右下 More／Quit**：More 顯示／隱藏「Other processes」區（見下節）；Quit 結束 App，所有 App 恢復原本的輸出。
+- **最下方「開機時自動啟動」勾選框**：用 `SMAppService` 註冊登入項目。註冊記下的是 App 當下的位置，所以請先把 App 裝進 `/Applications` 再勾選——在 `build/` 裡那份上勾選，下次重建就失效，因為建置腳本會刪掉並重建那個 bundle。
 
 最上面的系統輸出那一列跟下面的 App 列採用同樣的版面，因為它們本質上是同一種東西——一個播放目標，加一組輸出選擇。
 
@@ -96,9 +99,24 @@ LINE
 
 歸戶的判斷方式是**執行檔路徑**——helper 與 XPC 服務都住在所屬 App 的 bundle 裡（`/Applications/LINE.app/Contents/XPCServices/LINE.AudioService.xpc/…`），取路徑上最外層的 `.app` 即可。刻意不用父行程鏈當主要手段：XPC 服務是 launchd 啟動的，父行程是 launchd 而不是那個 App，而 XPC 服務往往正是發聲的那一個。父行程鏈只當備援。
 
-系統守護程序（CoreSpeech、audiomxd、控制中心…）預設隱藏——機器上通常有二十幾個，全開會把真正的 App 淹掉。已經設定過的項目一律顯示，不受開關影響。
+「最外層 `.app`」有一個例外：直接放在另一個 App 內 `Applications` 資料夾裡的 `.app` 是獨立 App，不是 helper。Xcode 把 Device Hub 放在 `Xcode.app/Contents/Applications/`、Simulator 放在 `Xcode.app/Contents/Developer/Applications/`，兩者各自成列，不會被歸到 Xcode 底下。
 
-已知的例外：共用的系統 XPC 服務（例如 WebKit 的 GPU 行程，會顯示成「LINE Graphics and Media」）住在框架裡而不是 App bundle 裡，無法歸戶，會單獨列在系統程序中。
+主清單**只列 App**——也就是 bundle 正以一般 App（有 Dock 圖示）身分在跑的行程。其餘的（CoreSpeech、audiomxd、控制中心、音訊驅動裡的守護程序如 `arkaudiod`…）收在 **Other processes** 區，按 **More** 才顯示——機器上通常有二十幾個，全列出來會把真正的 App 淹掉。對它們設定的路由在收合時照樣生效。SoundRouter 自己的行程永遠不列出：路由它只會把自己的輸出再抓回來。
+
+### Device Hub 與模擬器
+
+Xcode 的 Device Hub 本身幾乎不出聲，聲音是由共用的系統服務代播的。Device Hub 執行期間，這些服務會併進 Device Hub 那一列：
+
+| 來源 | 實際發聲的行程 |
+| --- | --- |
+| 模擬器 | `SimAudioProcessorService`（CoreSimulator）。歸給 Device Hub；Device Hub 沒在跑時歸給 Simulator.app |
+| 鏡像的實體 iPhone／iPad | `/usr/libexec/avconferenced` |
+
+兩者都不住在 App bundle 裡、都由 launchd 啟動，路徑與父行程鏈都歸不到 Device Hub；不這樣處理的話，對 Device Hub 建 tap 什麼都抓不到。
+
+**限制：** `avconferenced` 同時也負責 FaceTime、接續互通相機與 SharePlay 的聲音，而且跟鏡像的聲音混在同一個行程、送到同一個輸出裝置，tap 無從分開。**Device Hub 執行期間，FaceTime 通話的音量也會跟著 Device Hub 的設定走。**（曾試過在 `avconferenced` 開麥克風時把它拆出去，後來撤回：通話中 Device Hub 就完全無法調小。）
+
+已知的例外：共用的系統 XPC 服務（例如 WebKit 的 GPU 行程，會顯示成「LINE Graphics and Media」）住在框架裡而不是 App bundle 裡，無法歸戶，會單獨列在 Other processes 中。
 
 ## CLI 用法
 
@@ -172,6 +190,7 @@ Sources/AudioRouterCore/
 Sources/audiorouter/       CLI
 Sources/SoundRouterApp/    SwiftUI 選單列 App
 Tests/                     不依賴硬體的邏輯測試
+Packaging/                 build-app.sh、Info.plist、AppIcon.icns 與 make-icon.swift（重繪圖示）
 ```
 
 ## 實作上踩過的坑
@@ -186,9 +205,11 @@ Tests/                     不依賴硬體的邏輯測試
 
 **HAL 從來不會通知 `kAudioProcessPropertyIsRunningOutput`。** 對它註冊監聽器會回報成功，然後永遠不觸發。用 wildcard 監聽器才看得到 macOS 只針對 `IsRunning` 與 `Devices` 送通知。改掛 `IsRunning`，收到後再重讀 `IsRunningOutput` 取得實際狀態。
 
+**`MenuBarExtra` 的視窗只會長大、不會縮回。** 展開一份長清單再收合，視窗仍維持較高的尺寸，內容被置中，上下各多出一塊半透明的空白。面板先把高度鎖在內容本身（`fixedSize`），量到之後自己調整視窗大小，上緣固定在選單列下方（見 `RouterPanel.swift` 的 `WindowHeightSync`）。
+
 ## 目前未涵蓋的部分
 
-- **在地化只做了一半**：選單列介面已在地化（英文與繁體中文，跟隨系統語言），但 footer 顯示的 Core Audio 錯誤訊息、CLI 的所有輸出、以及診斷檔仍然只有繁體中文。
+- **在地化只做了一半**：選單列介面已在地化（英文與繁體中文，跟隨系統語言），Core Audio 錯誤訊息與授權提示為英文，但 CLI 的所有輸出與診斷檔仍然只有繁體中文。
 - **EQ 與 AudioUnit 效果鏈**：`RouteEngine.render` 目前只做音量與平衡。要加效果的話，掛在寫入 output buffer 之前。
 - **一個 App 同時分流到多個輸出裝置**：現在一條路由對一個裝置。
 - **AirPlay**：AirPlay 目標確實會以 Core Audio 裝置出現、也會列進下拉選單，但它能不能當 aggregate 的 sub-device 尚未實測——網路時脈讓人存疑。

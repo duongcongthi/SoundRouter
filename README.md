@@ -60,21 +60,22 @@ Builds are ad-hoc signed, so the signature hash changes every time you rebuild a
 
 ## Interface
 
-Click the menu bar icon:
+Click the menu bar icon (a square speaker cabinet):
 
-<img src="docs/screenshot.png" width="440" alt="SoundRouter panel showing the system output device and three apps, each with its own output device and volume">
+<img src="docs/screenshot.png" width="426" alt="SoundRouter panel showing the system output with its master volume, and five apps, each with its own output device and volume">
 
-> The screenshot is in Traditional Chinese; the interface follows your system language and ships with English too.
+> The interface follows your system language: English, or Traditional Chinese. Any other language falls back to English.
 
+- **System output** (top row): the default output device, plus a **master volume** slider and mute button. This is the device's own hardware volume, the same one the keyboard volume keys change, and the slider follows those keys. Devices without software volume control (some HDMI displays) show a note instead.
 - **Output device**: a segmented control, one segment per device. "Auto" leaves the app alone and lets it follow the system output. Segments show a device icon chosen by transport type — hover for the name.
-- **Volume**: a slider in 20 steps of 5%, capped at 100%. There is deliberately no gain boost — see [Why 100% is the ceiling](#why-100-is-the-ceiling).
+- **Volume**: a standard continuous slider, capped at 100%. There is deliberately no gain boost — see [Why 100% is the ceiling](#why-100-is-the-ceiling).
 - **Green dot**: the app is currently producing audio.
 - **Number badge**: how many audio-producing processes the app has (see below).
 - **"Not running" badge**: the app has a saved route but is not currently running. The setting is kept and reapplied when it comes back.
 - **Red triangle / info circle / spinner**: the route failed (hover for the message); its device is offline and audio is temporarily following the system; or its engine is still being set up.
 - **Right-click a row** for "Reset this app" and, for apps that are not running, "Forget this setting".
-- **Ellipsis, bottom right**: show/hide system processes.
-- **"Launch at login" checkbox** at the bottom: registers the app as a login item via `SMAppService`.
+- **More / Quit**, bottom right: More shows or hides the "Other processes" section (see below); Quit exits and restores every app's normal output.
+- **"Launch at login" checkbox** at the bottom: registers the app as a login item via `SMAppService`. The registration records the app's current location, so install the app in `/Applications` first — enabling it on the copy in `build/` stops working the next time you rebuild, because the build script deletes and recreates that bundle.
 
 The system output row at the top uses the same layout as the app rows, because it is the same kind of thing — a playback target with a set of output choices.
 
@@ -98,9 +99,24 @@ This is not cosmetic — it is a correctness requirement. Browsers, Slack and LI
 
 Ownership is resolved from the **executable path**: helpers and XPC services live inside their app's bundle (`/Applications/LINE.app/Contents/XPCServices/LINE.AudioService.xpc/…`), so the outermost `.app` on the path is the owner. The parent-process chain is deliberately *not* the primary method: XPC services are spawned by launchd, so their parent is launchd rather than the app — and the XPC service is often the one actually making sound. The parent chain is only a fallback.
 
-System daemons (CoreSpeech, audiomxd, Control Center…) are hidden by default; there are usually a couple of dozen of them and they drown out the real apps. Anything you have already configured is always shown regardless of the toggle.
+Two exceptions to "outermost `.app`": an `.app` that sits directly in an `Applications` folder inside another app is a standalone app, not a helper. Xcode ships Device Hub in `Xcode.app/Contents/Applications/` and Simulator in `Xcode.app/Contents/Developer/Applications/`; both get their own row instead of being filed under Xcode.
 
-Known gap: shared system XPC services — WebKit's GPU process, which shows up as something like "LINE Graphics and Media" — live inside a framework rather than an app bundle, so they cannot be attributed and appear separately under system processes.
+The main list shows **applications only** — processes whose bundle is running as a regular app with a Dock icon. Everything else (CoreSpeech, audiomxd, Control Center, audio-driver daemons such as `arkaudiod`…) goes into an **Other processes** section that appears when you press **More**; there are usually a couple of dozen of them and they would drown out the real apps. A route you set on one of them keeps working while the section is collapsed. SoundRouter's own process is never listed, since routing it would tap its own output back into itself.
+
+### Device Hub and the simulator
+
+Xcode's Device Hub makes almost no sound itself. Its audio is played by shared system services, which are folded into the Device Hub row while Device Hub is running:
+
+| Source | Process that actually plays it |
+| --- | --- |
+| Simulator | `SimAudioProcessorService` (CoreSimulator). Claimed by Device Hub, or by Simulator.app when Device Hub is not running |
+| Mirrored physical iPhone/iPad | `/usr/libexec/avconferenced` |
+
+Neither lives in an app bundle and both are launched by launchd, so path and parent-chain attribution cannot find them; without this, tapping Device Hub captures nothing.
+
+**Limitation:** `avconferenced` also carries FaceTime, Continuity Camera and SharePlay audio. They are mixed in the same process and sent to the same output device as the mirrored device, so no tap can tell them apart. **While Device Hub is running, a FaceTime call follows Device Hub's volume.** (Splitting `avconferenced` off while its microphone is in use was tried and reverted: during a call Device Hub could then not be turned down at all.)
+
+Known gap: shared system XPC services — WebKit's GPU process, which shows up as something like "LINE Graphics and Media" — live inside a framework rather than an app bundle, so they cannot be attributed and appear separately under Other processes.
 
 ## CLI
 
@@ -170,6 +186,7 @@ Sources/AudioRouterCore/
 Sources/audiorouter/       CLI
 Sources/SoundRouterApp/    SwiftUI menu bar app
 Tests/                     Unit tests for the hardware-independent logic
+Packaging/                 build-app.sh, Info.plists, AppIcon.icns and make-icon.swift (redraws the icon)
 ```
 
 ## Why 100% is the ceiling
@@ -188,9 +205,11 @@ Volume is a gain multiplier, and boosting past 1.0 pushes samples beyond ±1.0, 
 
 **The HAL never notifies `kAudioProcessPropertyIsRunningOutput`.** Registering a listener on it succeeds and then never fires. A wildcard listener reveals that macOS only sends notifications for `IsRunning` and `Devices`. Listen on `IsRunning`, then re-read `IsRunningOutput` for the actual state.
 
+**The `MenuBarExtra` window grows but never shrinks.** Expand a long list and collapse it again, and the window keeps its taller size with the content centred in it, leaving translucent empty bands above and below. The panel pins its height to its content (`fixedSize`), measures it, and resizes the window itself, keeping the top edge under the menu bar (`WindowHeightSync` in `RouterPanel.swift`).
+
 ## Not covered
 
-- **Localization is only partial**: the menu bar interface is localized (English and Traditional Chinese), but Core Audio error messages shown in the footer, all CLI output, and the diagnostic file are still Traditional Chinese only.
+- **Localization is only partial**: the menu bar interface is localized (English and Traditional Chinese), and Core Audio error messages and permission prompts are in English, but all CLI output and the diagnostic file are still Traditional Chinese only.
 - **EQ and AudioUnit effect chains**: `RouteEngine.render` only does volume and balance. Effects would hook in just before writing the output buffer.
 - **Splitting one app across multiple output devices**: one route targets one device.
 - **AirPlay**: AirPlay targets do appear as Core Audio devices and will show up in the dropdown, but whether one can serve as an aggregate sub-device is untested — network clocking makes it doubtful.
