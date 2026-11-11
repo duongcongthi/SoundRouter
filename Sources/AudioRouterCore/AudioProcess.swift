@@ -89,10 +89,14 @@ public struct AudioProcessGroup: Identifiable, Hashable, Sendable {
 }
 
 public enum AudioProcesses {
-    /// 系統上所有已註冊的音訊行程（未分組）。
+    /// 系統上所有已註冊的音訊行程（未分組），不含自己。
+    ///
+    /// 路由引擎本身就在出聲，自己會出現在清單上；對自己建 tap 只會把自己的輸出
+    /// 再抓回來，形成回授，所以直接排除。
     public static func all() -> [AudioProcess] {
         let ids: [AudioObjectID] = (try? AudioObjectID.system.readArray(kAudioHardwarePropertyProcessObjectList)) ?? []
-        return ids.compactMap(AudioProcess.init(objectID:))
+        let ownPID = getpid()
+        return ids.compactMap(AudioProcess.init(objectID:)).filter { $0.pid != ownPID }
     }
 
     /// 所有播放源，已依所屬 App 分組。

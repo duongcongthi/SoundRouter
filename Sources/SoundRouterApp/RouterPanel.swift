@@ -16,7 +16,15 @@ struct RouterPanel: View {
         // 寬度跟著內容走，但夾在上下限之間：App 名稱長度差異很大，
         // 完全放任會讓面板寬到荒謬；完全寫死則會在裝置多時把分段控制擠扁。
         .frame(minWidth: 380, idealWidth: 420, maxWidth: 560)
+        // MenuBarExtra 的視窗只會長大、不會自己縮回：展開 More 後再收合，視窗仍維持
+        // 較高的尺寸，內容被置中，上下各多出一塊半透明的空白。所以先把高度鎖在內容
+        // 本身的高度，量到之後再主動把視窗縮回去。
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        .background(WindowHeightSync(height: contentHeight))
     }
+
+    @State private var contentHeight: CGFloat = 0
 
     /// 一般 App（含記住設定但沒在跑的），永遠顯示。
     private var userApps: [RoutedApp] { manager.apps.filter { !$0.isSystemProcess } }
@@ -129,6 +137,27 @@ struct RouterPanel: View {
             }
         }
         .labelStyle(.titleAndIcon)
+    }
+}
+
+/// 讓面板視窗的高度跟內容一致，上緣固定（面板是從選單列垂下來的）。
+private struct WindowHeightSync: NSViewRepresentable {
+    let height: CGFloat
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        guard height > 0 else { return }
+        // 等這一輪版面配置結束、view 確實掛上視窗後再調整。
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            var frame = window.frame
+            let delta = height - window.contentRect(forFrameRect: frame).height
+            guard abs(delta) > 0.5 else { return }
+            frame.origin.y -= delta
+            frame.size.height += delta
+            window.setFrame(frame, display: true)
+        }
     }
 }
 
