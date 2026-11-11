@@ -183,6 +183,35 @@ final class ProcessGroupingTests: XCTestCase {
         XCTAssertFalse(groups[0].isSystemProcess)
     }
 
+    /// 只有 avconferenced 開著麥克風才算通話；只出聲（鏡像 Device Hub）或別的 App 錄音都不算。
+    func testVoiceCallIsActiveOnlyWhileCallServiceRecords() {
+        func groups(callServicePlaying: Bool, callServiceRecording: Bool, otherRecording: Bool)
+            -> [AudioProcessGroup]
+        {
+            let processes = [
+                AudioProcess(
+                    id: 1, pid: 868, bundleID: "com.apple.avconferenced", name: "avconferenced",
+                    isPlaying: callServicePlaying, isRecording: callServiceRecording
+                ),
+                AudioProcess(
+                    id: 2, pid: 500, bundleID: "com.apple.VoiceMemos", name: "Voice Memos",
+                    isPlaying: false, isRecording: otherRecording
+                ),
+            ]
+            return AudioProcesses.makeGroups(from: processes) { _ in nil }
+        }
+
+        XCTAssertTrue(AudioProcesses.isVoiceCallActive(
+            in: groups(callServicePlaying: true, callServiceRecording: true, otherRecording: false)
+        ))
+        XCTAssertFalse(AudioProcesses.isVoiceCallActive(
+            in: groups(callServicePlaying: true, callServiceRecording: false, otherRecording: false)
+        ))
+        XCTAssertFalse(AudioProcesses.isVoiceCallActive(
+            in: groups(callServicePlaying: false, callServiceRecording: false, otherRecording: true)
+        ))
+    }
+
     /// 沒有 bundle ID 也沒有歸屬時，用 pid 當鍵，不能讓多個行程互相蓋掉。
     func testProcessesWithoutBundleIDGetDistinctKeys() {
         let processes = [

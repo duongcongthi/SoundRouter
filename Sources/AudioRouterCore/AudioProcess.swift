@@ -201,6 +201,32 @@ public enum AudioProcesses {
         return owningApplicationFromParentChain(of: pid)
     }
 
+    /// 經手 FaceTime 通話（含接續互通的電話）聲音的系統服務。
+    static let callServiceBundleID = "com.apple.avconferenced"
+
+    static func isCallService(_ process: AudioProcess) -> Bool {
+        process.bundleID == callServiceBundleID
+    }
+
+    /// 正在通話：`avconferenced` 開著麥克風。只鏡像 Device Hub 時它只出聲、不收音。
+    /// 通話期間系統會把其他所有行程的輸出壓低（見 `DuckingExemption`）。
+    public static func isVoiceCallActive(in groups: [AudioProcessGroup]) -> Bool {
+        groups.contains { group in group.processes.contains { isCallService($0) && $0.isRecording } }
+    }
+
+    /// 行程目前送出聲音的第一個輸出裝置的 UID；沒在出聲或讀不到時為 nil。
+    static func outputDeviceUID(ofProcess objectID: AudioObjectID) -> String? {
+        let devices: [AudioObjectID] = (try? objectID.readArray(
+            kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeOutput, as: AudioObjectID.self
+        )) ?? []
+        return devices.lazy.compactMap { try? $0.readString(kAudioDevicePropertyDeviceUID) }.first
+    }
+
+    /// 一組行程正在使用的輸出裝置：以正在出聲的行程為準。
+    public static func outputDeviceUID(of group: AudioProcessGroup) -> String? {
+        group.processes.lazy.filter(\.isPlaying).compactMap { outputDeviceUID(ofProcess: $0.id) }.first
+    }
+
     static let deviceHubBundleID = "com.apple.dt.Devices"
     static let simulatorBundleID = "com.apple.iphonesimulator"
     static let faceTimeBundleID = "com.apple.FaceTime"
@@ -369,29 +395,53 @@ public enum AudioProcesses {
         PlaybackObserver(objectIDs: processObjectIDs, queue: queue, handler: handler)
     }
 
+    /// 另外監看麥克風開關的行程（通話服務）。`IsRunningInput` 變動時 HAL 不會通知，
+    /// 但開關麥克風會改變它的輸入裝置清單（`Devices`），所以聽這個。
+    public static func observePlaybackState(
+        of processObjectIDs: [AudioObjectID],
+        inputOf inputObjectIDs: [AudioObjectID],
+        queue: DispatchQueue,
+        handler: @escaping () -> Void
+    ) -> PlaybackObserver {
+        PlaybackObserver(
+            objectIDs: processObjectIDs, inputObjectIDs: inputObjectIDs, queue: queue, handler: handler
+        )
+    }
+
     /// 回傳型別要讓 RouterManager 讀得到 installedCount，所以不設為 private。
     public final class PlaybackObserver {
         private let queue: DispatchQueue
-        private var blocks: [(AudioObjectID, AudioObjectPropertyListenerBlock)] = []
+        private typealias Listener = (
+            objectID: AudioObjectID,
+            selector: AudioObjectPropertySelector,
+            scope: AudioObjectPropertyScope,
+            block: AudioObjectPropertyListenerBlock
+        )
+        private var blocks: [Listener] = []
 
         /// 實際掛上的監聽器數量，給診斷用。
         public var installedCount: Int { blocks.count }
 
-        init(objectIDs: [AudioObjectID], queue: DispatchQueue, handler: @escaping () -> Void) {
+        init(
+            objectIDs: [AudioObjectID],
+            inputObjectIDs: [AudioObjectID] = [],
+            queue: DispatchQueue,
+            handler: @escaping () -> Void
+        ) {
             self.queue = queue
-            for objectID in objectIDs {
-                if let block = objectID.addListener(
-                    kAudioProcessPropertyIsRunning, queue: queue, handler: handler
-                ) {
-                    blocks.append((objectID, block))
+            let listeners = objectIDs.map { ($0, kAudioProcessPropertyIsRunning, kAudioObjectPropertyScopeGlobal) }
+                + inputObjectIDs.map { ($0, kAudioProcessPropertyDevices, kAudioObjectPropertyScopeInput) }
+            for (objectID, selector, scope) in listeners {
+                if let block = objectID.addListener(selector, scope: scope, queue: queue, handler: handler) {
+                    blocks.append((objectID, selector, scope, block))
                 }
             }
         }
 
         deinit {
-            for (objectID, block) in blocks {
-                objectID.removeListener(
-                    kAudioProcessPropertyIsRunning, queue: queue, block: block
+            for listener in blocks {
+                listener.objectID.removeListener(
+                    listener.selector, scope: listener.scope, queue: queue, block: listener.block
                 )
             }
         }

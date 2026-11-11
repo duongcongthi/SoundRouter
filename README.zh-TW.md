@@ -207,6 +207,8 @@ Packaging/                 build-app.sh、Info.plist、AppIcon.icns 與 make-ico
 
 **`MenuBarExtra` 的視窗只會長大、不會縮回。** 展開一份長清單再收合，視窗仍維持較高的尺寸，內容被置中，上下各多出一塊半透明的空白。面板先把高度鎖在內容本身（`fixedSize`），量到之後自己調整視窗大小，上緣固定在選單列下方（見 `RouterPanel.swift` 的 `WindowHeightSync`）。
 
+**語音通話會壓低其他所有 App，連 SoundRouter 的輸出也一樣。** FaceTime 通話時 `avconferenced` 呼叫 `AudioDeviceDuck`，coreaudiod 便把其他所有行程在每個輸出裝置上壓低 4 到 15 dB。光是路由沒有用：aggregate 的輸出屬於 SoundRouter，它也只是被壓的一方。只有呼叫 `AudioDeviceDuck` 的行程不受影響，所以每個引擎啟動後都在自己的 aggregate 上以 0.999999（聽不出差別）登記，停止時以 1.0 撤銷（SoundSource 的 `arkaudiod` 也是這樣做）。登記是以「行程 × 實體裝置」為單位，撤銷一條後會替仍在跑的引擎重新登記。這個函式 CoreAudio 仍有匯出，但 SDK 標頭已不再宣告，所以用 `dlsym` 查找；哪天消失了，路由中的 App 只是回到會被壓低。`avconferenced` 開著麥克風時（通話中；單純鏡像 Device Hub 只出聲），所有正在出聲的 App 會被暫時接手，維持原音量、送回它原本在用的裝置，就不會被壓低；這時拉它的滑軌就存成一般的路由。通話一結束便交還，聲音回到原本的路徑。系統程序和含 `avconferenced` 本身的那一組不接手。`IsRunningInput` 變動沒有通知，所以靠監聽 `avconferenced` 的輸入 `Devices` 判斷通話開始與結束。
+
 ## 目前未涵蓋的部分
 
 - **在地化只做了一半**：選單列介面已在地化（英文與繁體中文，跟隨系統語言），Core Audio 錯誤訊息與授權提示為英文，但 CLI 的所有輸出與診斷檔仍然只有繁體中文。

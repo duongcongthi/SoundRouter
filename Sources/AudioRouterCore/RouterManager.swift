@@ -95,6 +95,8 @@ public final class RouterManager: ObservableObject {
     private var pendingStarts: Set<String> = []
     /// 最近一次掃描到的播放源。每輪 refresh 算一次，避免重複查詢 Core Audio。
     private var currentGroups: [AudioProcessGroup] = []
+    /// 正在 FaceTime 通話（見 `callTakeoverKeys`）。
+    private var isVoiceCallActive = false
 
     private var processObserver: Any?
     private var deviceObserver: Any?
@@ -105,6 +107,7 @@ public final class RouterManager: ObservableObject {
     private var playbackObserver: AudioProcesses.PlaybackObserver?
     /// 目前監看中的行程，用來判斷是否需要重掛。
     private var watchedPlaybackIDs: [AudioObjectID] = []
+    private var watchedCallServiceIDs: [AudioObjectID] = []
     private let storeURL: URL
 
     public init(storeURL: URL? = nil) {
@@ -227,6 +230,7 @@ public final class RouterManager: ObservableObject {
         updateSystemVolumeObserver()
         readSystemVolume()
         currentGroups = AudioProcesses.groups()
+        isVoiceCallActive = AudioProcesses.isVoiceCallActive(in: currentGroups)
         reconcile()
         rebuildSnapshot()
         updatePlaybackObservers()
@@ -260,13 +264,23 @@ public final class RouterManager: ObservableObject {
             .flatMap(\.processObjectIDs)
             .sorted()
 
+        // 通話服務不論顯不顯示都要監看：它開關麥克風就是通話開始／結束。
+        let callServiceIDs = currentGroups
+            .flatMap(\.processes)
+            .filter(AudioProcesses.isCallService)
+            .map(\.id)
+            .sorted()
+
         // 監看對象沒變就不動，否則每次 refresh 都拆掉重掛。
-        guard ids != watchedPlaybackIDs else { return }
+        guard ids != watchedPlaybackIDs || callServiceIDs != watchedCallServiceIDs else { return }
         watchedPlaybackIDs = ids
+        watchedCallServiceIDs = callServiceIDs
 
         // 先釋放舊的：它的 deinit 會把先前的監聽器移除。
         playbackObserver = nil
-        playbackObserver = AudioProcesses.observePlaybackState(of: ids, queue: .main) { [weak self] in
+        playbackObserver = AudioProcesses.observePlaybackState(
+            of: ids, inputOf: callServiceIDs, queue: .main
+        ) { [weak self] in
             Task { @MainActor in self?.refresh() }
         }
     }
@@ -283,6 +297,7 @@ public final class RouterManager: ObservableObject {
         lines.append("播放源群組：\(currentGroups.count)")
         lines.append("清單顯示：\(apps.count)（顯示系統程序：\(showsSystemProcesses)）")
         lines.append("播放狀態監聽：\(playbackObserver?.installedCount ?? 0) / \(watchedPlaybackIDs.count) 個行程")
+        lines.append("通話中：\(isVoiceCallActive)（暫時接手：\(callTakeoverKeys().sorted().joined(separator: "、"))）")
         lines.append("")
         lines.append("— 所有裝置 —")
         for device in all {
@@ -323,13 +338,24 @@ public final class RouterManager: ObservableObject {
             groupsByKey[group.key] = group
         }
 
+        let takeoverKeys = callTakeoverKeys()
+
         // 收掉已經不需要的引擎。
-        for key in engines.keys where !shouldRunEngine(key: key, group: groupsByKey[key]) {
+        for key in engines.keys
+        where !shouldRunEngine(key: key, group: groupsByKey[key], takeoverKeys: takeoverKeys) {
             teardownEngine(forKey: key)
         }
 
-        for (key, setting) in settings {
-            guard let group = groupsByKey[key], shouldRunEngine(key: key, group: group) else { continue }
+        // 通話中暫時接手、使用者沒設定過的 App 用預設值（原音量、跟隨它原本的輸出裝置）。
+        var desired = settings
+        for key in takeoverKeys where desired[key] == nil {
+            desired[key] = RouteSettings(displayName: groupsByKey[key]?.name ?? key)
+        }
+
+        for (key, setting) in desired {
+            guard let group = groupsByKey[key],
+                  shouldRunEngine(key: key, group: group, takeoverKeys: takeoverKeys)
+            else { continue }
 
             // 使用者指定的裝置可能已經拔掉、關機或斷線。拿一個不存在的 UID 去建
             // aggregate 一定失敗，所以先確認它還在，不在就暫時退回系統輸出。
@@ -345,12 +371,18 @@ public final class RouterManager: ObservableObject {
             // 直接讓音訊走原本的路。設定本身留著，裝置接回來就恢復。
             var effective = setting
             if !requestedIsAvailable { effective.outputDeviceUID = nil }
-            guard !effective.isPassthrough else {
+            guard !effective.isPassthrough || takeoverKeys.contains(key) else {
                 teardownEngine(forKey: key)
                 continue
             }
 
-            guard let deviceUID = effective.outputDeviceUID ?? defaultOutput?.uid else { continue }
+            // 跟隨系統時，接手的 App 送回它原本在用的裝置——它可能自己選了別的輸出。
+            let followedUID = takeoverKeys.contains(key)
+                ? AudioProcesses.outputDeviceUID(of: group).flatMap { uid in
+                    outputDevices.contains { $0.uid == uid } ? uid : nil
+                }
+                : nil
+            guard let deviceUID = effective.outputDeviceUID ?? followedUID ?? defaultOutput?.uid else { continue }
 
             // 一組裡的所有行程共用一條路由，helper 發出的聲音才抓得到。
             let processIDs = group.processObjectIDs
@@ -445,9 +477,27 @@ public final class RouterManager: ObservableObject {
         writeDiagnosticSnapshot()
     }
 
-    private func shouldRunEngine(key: String, group: AudioProcessGroup?) -> Bool {
+    private func shouldRunEngine(key: String, group: AudioProcessGroup?, takeoverKeys: Set<String>) -> Bool {
+        guard group != nil else { return false }
+        if takeoverKeys.contains(key) { return true }
         guard let setting = settings[key], !setting.isPassthrough else { return false }
-        return group != nil
+        return true
+    }
+
+    /// 通話期間暫時接手的播放源。
+    ///
+    /// 通話時系統把通話以外所有行程的輸出壓低 4 到 15 dB，只有 ducker 不受影響
+    /// （見 `DuckingExemption`）。讓正在出聲的 App 改經引擎播放，就能維持原本的音量；
+    /// 使用者沒設定過的用原音量，想調再自己拉。通話一結束就交還，回到系統原本的路徑。
+    /// 已經接手的保留到通話結束，暫停一下不必拆掉重建。
+    /// 不接手系統程序（提示音之類本來就該被壓低），也不接手含通話服務本身的那一組。
+    private func callTakeoverKeys() -> Set<String> {
+        guard isVoiceCallActive else { return [] }
+        return Set(currentGroups.lazy.filter { group in
+            !group.isSystemProcess
+                && !group.processes.contains(where: AudioProcesses.isCallService)
+                && (group.isPlaying || self.engines[group.key] != nil || self.pendingStarts.contains(group.key))
+        }.map(\.key))
     }
 
     private func teardownEngine(forKey key: String) {

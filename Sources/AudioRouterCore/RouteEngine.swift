@@ -153,6 +153,7 @@ public final class RouteEngine {
 
     public func stop() {
         if let ioProcID {
+            DuckingExemption.set(false, on: aggregateID)
             AudioDeviceStop(aggregateID, ioProcID)
             AudioDeviceDestroyIOProcID(aggregateID, ioProcID)
             self.ioProcID = nil
@@ -277,6 +278,7 @@ public final class RouteEngine {
         }
         ioProcID = procID
         try checked("Start aggregate device") { AudioDeviceStart(aggregateID, procID) }
+        DuckingExemption.set(true, on: aggregateID)
     }
 
     private func aggregateOutputFormat() throws -> AudioStreamBasicDescription {
@@ -441,5 +443,51 @@ extension AudioStreamBasicDescription {
     var debugSummary: String {
         "\(Int(mSampleRate))Hz \(mChannelsPerFrame)ch \(mBitsPerChannel)bit"
             + (isNonInterleaved ? " non-interleaved" : " interleaved")
+    }
+}
+
+/// 讓路由後的聲音不被語音通話壓低。
+///
+/// FaceTime 等通話進行時，系統以 `AudioDeviceDuck` 把通話以外所有行程的輸出壓低
+/// （實測 −4 到 −15 dB），經 SoundRouter 重新播放的聲音也一樣被壓。只有「duckee」會被壓：
+/// 自己呼叫過 `AudioDeviceDuck` 的行程是「ducker」，它在該裝置上的輸出維持原音量。
+/// 所以啟動後在自己的 aggregate 上以 0.999999（約 −0.00001 dB，聽不出差別）登記成 ducker，
+/// 停止前以 1.0 撤銷。SoundSource 的 arkaudiod 也是這樣做的。
+///
+/// `AudioDeviceDuck` 仍由 CoreAudio 匯出，但新版 SDK 的標頭已不再宣告，所以執行期查找；
+/// 找不到就什麼都不做，只是回到會被通話壓低的行為。
+enum DuckingExemption {
+    private typealias DuckFunction = @convention(c) (
+        AudioObjectID, Float32, UnsafePointer<AudioTimeStamp>?, Float32
+    ) -> OSStatus
+
+    private static let duck: DuckFunction? = {
+        // RTLD_DEFAULT 是 ((void *)-2)，Swift 沒有匯入這個巨集。
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "AudioDeviceDuck") else {
+            return nil
+        }
+        return unsafeBitCast(symbol, to: DuckFunction.self)
+    }()
+
+    /// ducker 身分是「行程 × 實體裝置」層級的：兩條路由送到同一個喇叭時，
+    /// 其中一條撤銷會連另一條的豁免一起拿掉。所以記住還在跑的 aggregate，撤銷後替它們重新登記。
+    private static let lock = NSLock()
+    private static var activeDevices: Set<AudioObjectID> = []
+
+    static func set(_ exempt: Bool, on device: AudioObjectID) {
+        guard device.isValid, let duck else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        // 失敗時沒有可補救的動作：路由照常運作，只是通話期間仍會被壓低，所以不中斷啟動。
+        if exempt {
+            activeDevices.insert(device)
+            _ = duck(device, 0.999_999, nil, 0)
+        } else {
+            activeDevices.remove(device)
+            _ = duck(device, 1, nil, 0)
+            for remaining in activeDevices {
+                _ = duck(remaining, 0.999_999, nil, 0)
+            }
+        }
     }
 }
