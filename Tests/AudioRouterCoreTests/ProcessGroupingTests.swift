@@ -152,11 +152,12 @@ final class ProcessGroupingTests: XCTestCase {
         )
     }
 
-    /// 實機鏡像的聲音經 avconferenced 播放，只歸給 Device Hub（Simulator 不做實機鏡像）。
-    func testAVConferencedIsClaimedOnlyByDeviceHub() {
+    /// 實機鏡像與 FaceTime 通話都經 avconferenced 播放：Device Hub 優先、FaceTime 次之
+    /// （Simulator 不做實機鏡像）。
+    func testAVConferencedIsClaimedByDeviceHubThenFaceTime() {
         XCTAssertEqual(
             AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: "/usr/libexec/avconferenced"),
-            ["com.apple.dt.Devices"]
+            ["com.apple.dt.Devices", "com.apple.FaceTime"]
         )
         XCTAssertEqual(AudioProcesses.hostBundleIDs(forSharedAudioServiceAt: "/usr/sbin/coreaudiod"), [])
     }

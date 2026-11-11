@@ -110,11 +110,11 @@ Xcode 的 Device Hub 本身幾乎不出聲，聲音是由共用的系統服務�
 | 來源 | 實際發聲的行程 |
 | --- | --- |
 | 模擬器 | `SimAudioProcessorService`（CoreSimulator）。歸給 Device Hub；Device Hub 沒在跑時歸給 Simulator.app |
-| 鏡像的實體 iPhone／iPad | `/usr/libexec/avconferenced` |
+| 鏡像的實體 iPhone／iPad | `/usr/libexec/avconferenced`。歸給 Device Hub；Device Hub 沒在跑時歸給 FaceTime |
 
 兩者都不住在 App bundle 裡、都由 launchd 啟動，路徑與父行程鏈都歸不到 Device Hub；不這樣處理的話，對 Device Hub 建 tap 什麼都抓不到。
 
-**限制：** `avconferenced` 同時也負責 FaceTime、接續互通相機與 SharePlay 的聲音，而且跟鏡像的聲音混在同一個行程、送到同一個輸出裝置，tap 無從分開。**Device Hub 執行期間，FaceTime 通話的音量也會跟著 Device Hub 的設定走。**（曾試過在 `avconferenced` 開麥克風時把它拆出去，後來撤回：通話中 Device Hub 就完全無法調小。）
+**限制：** `avconferenced` 同時也負責 FaceTime、接續互通相機與 SharePlay 的聲音，而且跟鏡像的聲音混在同一個行程、送到同一個輸出裝置，tap 無從分開。**Device Hub 執行期間，FaceTime 通話的音量也會跟著 Device Hub 的設定走**，FaceTime 那一列則調不動——FaceTime.app 本身不出聲。只關掉 Device Hub 的視窗不夠，要結束它（⌘Q），通話才會改歸 FaceTime 那一列。（曾試過在 `avconferenced` 開麥克風時把它拆出去，後來撤回：通話中 Device Hub 就完全無法調小。）
 
 已知的例外：共用的系統 XPC 服務（例如 WebKit 的 GPU 行程，會顯示成「LINE Graphics and Media」）住在框架裡而不是 App bundle 裡，無法歸戶，會單獨列在 Other processes 中。
 

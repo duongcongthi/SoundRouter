@@ -203,18 +203,20 @@ public enum AudioProcesses {
 
     static let deviceHubBundleID = "com.apple.dt.Devices"
     static let simulatorBundleID = "com.apple.iphonesimulator"
+    static let faceTimeBundleID = "com.apple.FaceTime"
 
     /// 代替某個 App 發聲的共用系統服務 → 可以認領它的宿主 App，依優先順序排列。
     ///
     /// Device Hub 本身幾乎不出聲，真正發聲的是這些服務，路徑與父行程鏈（launchd）都歸不到它：
     /// - 模擬器：CoreSimulator 的 `SimAudioProcessorService` 代播，Device Hub 或舊的 Simulator.app 都會用到。
     /// - 實機鏡像：iPhone／iPad 的聲音經 `avconferenced` 串流回 Mac 播放。
-    ///   它也服務 FaceTime、接續互通相機等，所以只在 Device Hub 執行時才歸給它。
-    ///   通話與鏡像的聲音混在同一個行程、同一個輸出裝置上，tap 無從分開：
-    ///   Device Hub 執行期間，通話音量也會跟著 Device Hub 的設定走。
+    ///   它也服務 FaceTime、接續互通相機等。通話與鏡像的聲音混在同一個行程、同一個輸出裝置上，
+    ///   tap 無從分開：Device Hub 執行期間歸給它，通話音量也跟著 Device Hub 的設定走；
+    ///   Device Hub 沒在跑時改歸 FaceTime，FaceTime 那一列才調得到通話音量
+    ///   （FaceTime.app 本身不出聲，通話聲音全在 avconferenced）。
     static func hostBundleIDs(forSharedAudioServiceAt path: String) -> [String] {
         if path == "/usr/libexec/avconferenced" {
-            return [deviceHubBundleID]
+            return [deviceHubBundleID, faceTimeBundleID]
         }
         if path.contains("/CoreSimulator.framework/"),
            (path as NSString).lastPathComponent == "SimAudioProcessorService" {

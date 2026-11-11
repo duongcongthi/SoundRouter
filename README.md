@@ -110,11 +110,11 @@ Xcode's Device Hub makes almost no sound itself. Its audio is played by shared s
 | Source | Process that actually plays it |
 | --- | --- |
 | Simulator | `SimAudioProcessorService` (CoreSimulator). Claimed by Device Hub, or by Simulator.app when Device Hub is not running |
-| Mirrored physical iPhone/iPad | `/usr/libexec/avconferenced` |
+| Mirrored physical iPhone/iPad | `/usr/libexec/avconferenced`. Claimed by Device Hub, or by FaceTime when Device Hub is not running |
 
 Neither lives in an app bundle and both are launched by launchd, so path and parent-chain attribution cannot find them; without this, tapping Device Hub captures nothing.
 
-**Limitation:** `avconferenced` also carries FaceTime, Continuity Camera and SharePlay audio. They are mixed in the same process and sent to the same output device as the mirrored device, so no tap can tell them apart. **While Device Hub is running, a FaceTime call follows Device Hub's volume.** (Splitting `avconferenced` off while its microphone is in use was tried and reverted: during a call Device Hub could then not be turned down at all.)
+**Limitation:** `avconferenced` also carries FaceTime, Continuity Camera and SharePlay audio. They are mixed in the same process and sent to the same output device as the mirrored device, so no tap can tell them apart. **While Device Hub is running, a FaceTime call follows Device Hub's volume**, and the FaceTime row has no effect, because FaceTime.app itself plays nothing. Closing Device Hub's window is not enough; quit it (⌘Q) and the call moves to the FaceTime row. (Splitting `avconferenced` off while its microphone is in use was tried and reverted: during a call Device Hub could then not be turned down at all.)
 
 Known gap: shared system XPC services — WebKit's GPU process, which shows up as something like "LINE Graphics and Media" — live inside a framework rather than an app bundle, so they cannot be attributed and appear separately under Other processes.
 
