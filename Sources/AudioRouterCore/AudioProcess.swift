@@ -288,14 +288,13 @@ public enum AudioProcesses {
             ?? (info?["CFBundleName"] as? String)
             ?? ((path as NSString).lastPathComponent as NSString).deletingPathExtension
 
-        // 有在跑就直接看啟動策略；沒在跑時退而求其次看路徑，
-        // 住在 /System 底下的一律當系統元件。
-        let isUserApplication: Bool
-        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
-            isUserApplication = running.activationPolicy == .regular
-        } else {
-            isUserApplication = !path.hasPrefix("/System/")
-        }
+        // 只有正以一般 App（有 Dock 圖示）身分在跑的才算使用者 App。
+        // 沒有以 App 身分在跑、卻在發聲的 bundle，是住在 .app 裡的背景程序：
+        // 例如音訊驅動內的守護程序（ARK.driver 裡的 arkaudiod）、模擬器的 SpringBoard。
+        // 先前「不在 /System 底下就算 App」的推斷會把它們混進 App 清單。
+        let isUserApplication = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID).first?
+            .activationPolicy == .regular
         return OwningApplication(
             pid: 0, bundleID: bundleID, name: name, isUserApplication: isUserApplication
         )

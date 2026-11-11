@@ -10,7 +10,7 @@ struct SoundRouterApp: App {
             RouterPanel()
                 .environmentObject(manager)
         } label: {
-            Image(systemName: "slider.horizontal.below.rectangle")
+            Image(nsImage: MenuBarIcon.image)
         }
         .menuBarExtraStyle(.window)
     }

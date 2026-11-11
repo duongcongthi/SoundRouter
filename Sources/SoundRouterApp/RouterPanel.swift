@@ -18,9 +18,16 @@ struct RouterPanel: View {
         .frame(minWidth: 380, idealWidth: 420, maxWidth: 560)
     }
 
+    /// 一般 App（含記住設定但沒在跑的），永遠顯示。
+    private var userApps: [RoutedApp] { manager.apps.filter { !$0.isSystemProcess } }
+    /// 不是 App 的背景程序，收在「More」裡，按了才顯示。
+    private var otherProcesses: [RoutedApp] {
+        manager.showsSystemProcesses ? manager.apps.filter(\.isSystemProcess) : []
+    }
+
     private var appList: some View {
         Group {
-            if manager.apps.isEmpty {
+            if userApps.isEmpty && otherProcesses.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "speaker.slash")
                         .font(.title2)
@@ -32,19 +39,36 @@ struct RouterPanel: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
             } else {
-                // 每列約 68pt：名稱與音量兩行加上下 padding。
-                FittingList(estimatedHeight: CGFloat(manager.apps.count) * 68) {
+                // 每列約 68pt：名稱與音量兩行加上下 padding；分區標題約 28pt。
+                let rowCount = userApps.count + otherProcesses.count
+                FittingList(estimatedHeight: CGFloat(rowCount) * 68 + (otherProcesses.isEmpty ? 0 : 28)) {
                     // 用 VStack 而非 LazyVStack：清單頂多幾十列，不需要延遲載入，
                     // 而且延遲建立的子視圖會讓視窗算不出正確高度。
                     VStack(spacing: 0) {
-                        ForEach(manager.apps) { app in
-                            AppRow(app: app)
-                            if app.id != manager.apps.last?.id {
-                                Divider().padding(.leading, 44)
-                            }
+                        rows(userApps)
+                        if !otherProcesses.isEmpty {
+                            if !userApps.isEmpty { Divider() }
+                            Text(L("systemProcesses.title"))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 8)
+                                .padding(.bottom, 2)
+                            rows(otherProcesses)
                         }
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rows(_ apps: [RoutedApp]) -> some View {
+        ForEach(apps) { app in
+            AppRow(app: app)
+            if app.id != apps.last?.id {
+                Divider().padding(.leading, 44)
             }
         }
     }
@@ -87,23 +111,24 @@ struct RouterPanel: View {
             .toggleStyle(.checkbox)
 
             Spacer()
-            Button {
-                manager.showsSystemProcesses.toggle()
-            } label: {
-                Image(systemName: manager.showsSystemProcesses ? "ellipsis.circle.fill" : "ellipsis.circle")
+
+            // 用文字加圖示的標準按鈕：只有圖示時太小，也看不出是做什麼的。
+            Toggle(isOn: $manager.showsSystemProcesses) {
+                Label(
+                    L("systemProcesses.more"),
+                    systemImage: manager.showsSystemProcesses ? "chevron.up" : "chevron.down"
+                )
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(manager.showsSystemProcesses ? Color.accentColor : Color.secondary)
+            .toggleStyle(.button)
             .help(L("systemProcesses.toggleHelp"))
 
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
-                Image(systemName: "power")
+                Label(L("app.quit"), systemImage: "power")
             }
-            .buttonStyle(.borderless)
-            .help(L("app.quit"))
         }
+        .labelStyle(.titleAndIcon)
     }
 }
 

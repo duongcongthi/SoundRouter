@@ -18,7 +18,7 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.soundrouter.app</string>
 	<key>CFBundleExecutable</key>
-	<string>SoundRouterApp</string>
+	<string>SoundRouter</string>
 	<!-- 由 Packaging/make-icon.swift 產生，build-app.sh 會複製到 Contents/Resources。 -->
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>

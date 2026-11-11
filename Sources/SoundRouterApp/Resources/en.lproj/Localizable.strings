@@ -19,3 +19,5 @@
 "route.auto" = "Auto";
 "device.offline" = "The selected output device is offline; using the system output until it comes back.";
 "systemOutput.volumeUnavailable" = "This device does not support volume control";
+"systemProcesses.more" = "More";
+"systemProcesses.title" = "Other processes";

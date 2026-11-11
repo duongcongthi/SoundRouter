@@ -20,7 +20,9 @@ BIN_DIR="$(swift build -c "$CONFIG" "${ARCHS[@]}" --show-bin-path)"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp "$BIN_DIR/SoundRouterApp" "$APP/Contents/MacOS/SoundRouterApp"
+# 執行檔在 bundle 裡改名為 SoundRouter：行程名稱會出現在活動監視器、強制結束、
+# 登入項目等處，要跟 App 名稱一致，不能露出 SwiftPM 的產品名 SoundRouterApp。
+cp "$BIN_DIR/SoundRouterApp" "$APP/Contents/MacOS/SoundRouter"
 cp Packaging/Info.plist "$APP/Contents/Info.plist"
 cp Packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
@@ -43,9 +45,10 @@ codesign --verify --verbose=2 "$APP" 2>&1 | sed 's/^/  /'
 # 所以另外包一份帶 bundle 身分的版本，用 `open` 啟動時可正常擷取音訊。
 PROBE="build/AudioRouterProbe.app"
 rm -rf "$PROBE"
-mkdir -p "$PROBE/Contents/MacOS"
+mkdir -p "$PROBE/Contents/MacOS" "$PROBE/Contents/Resources"
 cp "$BIN_DIR/audiorouter" "$PROBE/Contents/MacOS/audiorouter"
 cp Packaging/ProbeInfo.plist "$PROBE/Contents/Info.plist"
+cp Packaging/AppIcon.icns "$PROBE/Contents/Resources/AppIcon.icns"
 codesign --force --sign "$IDENTITY" "$PROBE"
 
 # 裸執行檔也簽一下，至少在已獲授權的終端機裡跑得動。
